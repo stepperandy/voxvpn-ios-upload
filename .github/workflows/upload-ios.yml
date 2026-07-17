@@ -3,32 +3,72 @@ name: Upload IPA to App Store Connect
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   upload:
+    name: Upload signed IPA
     runs-on: macos-latest
 
     steps:
-      - name: Checkout
+      - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Download IPA from GitHub Release
+      - name: Show available releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download --pattern "VoxVPN.ipa"
+          gh release list \
+            --repo "$GITHUB_REPOSITORY" \
+            --limit 10
 
-      - name: Upload to App Store Connect
+      - name: Download VoxVPN IPA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/ipa"
+
+          gh release download \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "VoxVPN.ipa" \
+            --dir "$RUNNER_TEMP/ipa" \
+            --clobber
+
+          echo "Downloaded files:"
+          ls -lah "$RUNNER_TEMP/ipa"
+
+          test -f "$RUNNER_TEMP/ipa/VoxVPN.ipa"
+
+          echo "IPA_PATH=$RUNNER_TEMP/ipa/VoxVPN.ipa" >> "$GITHUB_ENV"
+
+      - name: Install Apple API private key
+        env:
+          APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+          APPSTORE_PRIVATE_KEY: ${{ secrets.APPSTORE_PRIVATE_KEY }}
+        run: |
+          test -n "$APPSTORE_KEY_ID"
+          test -n "$APPSTORE_PRIVATE_KEY"
+
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+
+          printf '%s\n' "$APPSTORE_PRIVATE_KEY" \
+            > "$HOME/.appstoreconnect/private_keys/AuthKey_${APPSTORE_KEY_ID}.p8"
+
+          chmod 600 \
+            "$HOME/.appstoreconnect/private_keys/AuthKey_${APPSTORE_KEY_ID}.p8"
+
+      - name: Upload IPA to App Store Connect
         env:
           APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
           APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
-          APPSTORE_PRIVATE_KEY: ${{ secrets.APPSTORE_PRIVATE_KEY }}
         run: |
-          mkdir -p ~/.appstoreconnect/private_keys
-          echo "$APPSTORE_PRIVATE_KEY" > ~/.appstoreconnect/private_keys/AuthKey_${APPSTORE_KEY_ID}.p8
+          test -n "$APPSTORE_KEY_ID"
+          test -n "$APPSTORE_ISSUER_ID"
 
           xcrun altool \
             --upload-app \
             --type ios \
-            --file VoxVPN.ipa \
+            --file "$IPA_PATH" \
             --apiKey "$APPSTORE_KEY_ID" \
             --apiIssuer "$APPSTORE_ISSUER_ID"
