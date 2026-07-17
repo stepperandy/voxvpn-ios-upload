@@ -1,36 +1,76 @@
-# This is a basic workflow to help you get started with Actions
+name: Upload IPA to App Store Connect
 
-name: CI
-
-# Controls when the workflow will run
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
-  build:
-    # The type of runner that the job will run on
-    runs-on: ubuntu-latest
+  upload:
+    name: Upload signed IPA
+    runs-on: macos-latest
 
-    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-      # Runs a single command using the runners shell
-      - name: Run a one-line script
-        run: echo Hello, world!
-
-      # Runs a set of commands using the runners shell
-      - name: Run a multi-line script
+      - name: Locate IPA
+        shell: bash
         run: |
-          echo Add other actions to build,
-          echo test, and deploy your project.
+          IPA_PATH="$(find "$GITHUB_WORKSPACE" -type f -name "*.ipa" | head -n 1)"
+
+          if [ -z "$IPA_PATH" ]; then
+            echo "No IPA file was found in the repository."
+            exit 1
+          fi
+
+          echo "IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
+          echo "Found IPA: $IPA_PATH"
+
+      - name: Install App Store Connect API key
+        shell: bash
+        env:
+          APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+          APPSTORE_PRIVATE_KEY: ${{ secrets.APPSTORE_PRIVATE_KEY }}
+        run: |
+          if [ -z "$APPSTORE_KEY_ID" ]; then
+            echo "APPSTORE_KEY_ID secret is missing."
+            exit 1
+          fi
+
+          if [ -z "$APPSTORE_PRIVATE_KEY" ]; then
+            echo "APPSTORE_PRIVATE_KEY secret is missing."
+            exit 1
+          fi
+
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+
+          printf '%s' "$APPSTORE_PRIVATE_KEY" \
+            > "$HOME/.appstoreconnect/private_keys/AuthKey_${APPSTORE_KEY_ID}.p8"
+
+          chmod 600 \
+            "$HOME/.appstoreconnect/private_keys/AuthKey_${APPSTORE_KEY_ID}.p8"
+
+      - name: Validate credentials
+        shell: bash
+        env:
+          APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+          APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+        run: |
+          if [ -z "$APPSTORE_ISSUER_ID" ]; then
+            echo "APPSTORE_ISSUER_ID secret is missing."
+            exit 1
+          fi
+
+          echo "Key ID and Issuer ID are available."
+
+      - name: Upload IPA to App Store Connect
+        shell: bash
+        env:
+          APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+          APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+        run: |
+          xcrun altool \
+            --upload-app \
+            --type ios \
+            --file "$IPA_PATH" \
+            --apiKey "$APPSTORE_KEY_ID" \
+            --apiIssuer "$APPSTORE_ISSUER_ID"
